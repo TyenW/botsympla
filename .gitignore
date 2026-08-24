@@ -1,0 +1,26 @@
+# Perfis de Navegador (Contêm cookies e dados de sessão de login)
+Perfil_*/
+perfil_*/
+Perfil_Navegador/
+
+# Ingressos e arquivos gerados
+Ingressos_Salvos/
+
+# Logs e arquivos de execução
+*.log
+automacao.log
+
+# Ambientes virtuais e cache Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+
+# Arquivos do sistema e IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
