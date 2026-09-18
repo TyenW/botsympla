@@ -38,6 +38,42 @@ def formatar_url_evento(entrada):
         return f"https://{entrada}"
     return f"https://organizador.sympla.com.br/participantes-administrar?id={entrada}"
 
+def extrair_dados_participante(linha, qtd_padrao="1"):
+    """
+    Extrai nome, setor e quantidade de ingressos a partir de uma linha do CSV.
+    Suporta 1, 2 ou 3 colunas (Nome Completo, Setor, Quantidade).
+    """
+    linha_limpa = linha.strip()
+    if not linha_limpa:
+        return "", "", qtd_padrao
+    if ';' in linha_limpa:
+        partes = [p.strip() for p in linha_limpa.split(';')]
+    elif ',' in linha_limpa:
+        partes = [p.strip() for p in linha_limpa.split(',')]
+    else:
+        partes = [linha_limpa.strip()]
+    
+    nome = partes[0] if len(partes) > 0 else ""
+    setor = partes[1] if len(partes) > 1 and partes[1] else "GERAL"
+    
+    qtd = qtd_padrao
+    if len(partes) > 2 and partes[2]:
+        val = partes[2].strip()
+        if val.isdigit() and int(val) > 0:
+            qtd = val
+            
+    return nome, setor, qtd
+
+def eh_linha_cabecalho(nome, setor="", quantidade=""):
+    """Verifica se a linha lida representa o cabeçalho do arquivo CSV."""
+    n = nome.lower().strip()
+    s = setor.lower().strip()
+    q = str(quantidade).lower().strip()
+    headers_nome = ['nome completo', 'nome', 'aluno', 'participante', 'nomes', 'nomecompleto', '']
+    headers_setor = ['setor', 'categoria', 'tipo', 'ingresso', '']
+    headers_qtd = ['quantidade', 'qtd', 'num_ingressos', 'ingressos', '']
+    return (n in headers_nome) or (n.startswith('nome') and (not s or s in headers_setor or s in headers_qtd or q in headers_qtd))
+
 def criar_contexto_chrome(p, caminho_perfil):
     """Cria um contexto persistente do Chrome sem nenhuma flag suspeita para evitar o bloqueio de segurança do Cloudflare e do Google"""
     context = p.chromium.launch_persistent_context(
@@ -92,20 +128,21 @@ ctk.set_appearance_mode("Dark")    # Tema Escuro Premium por padrão
 ctk.set_default_color_theme("blue") # Cor de destaque padrão
 
 # =========================================================
-# CLASSE DA INTERFACE GRÁFICA PROFISSIONAL
+# CLASSE DA INTERFACE GRÁFICA PROFISSIONAL (REDESIGN PREMIUM)
 # =========================================================
 class AutomacaoApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
         # Configurações de Janela
-        self.title("Robô de Ingressos Sympla")
-        self.geometry("860x620")
-        self.minsize(820, 580)
+        self.title("Sympla Ticket Bot - Automação & Emissão em Lote")
+        self.geometry("1020x720")
+        self.minsize(960, 640)
+        self.configure(fg_color="#0B0F19")
         
-        self.grid_rowconfigure(1, weight=1)
-        self.grid_columnconfigure(0, weight=4) # Coluna de configurações (mais larga)
-        self.grid_columnconfigure(1, weight=3) # Coluna de controle e status
+        self.grid_rowconfigure(2, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_columnconfigure(1, weight=1)
 
         # Inicializa arquivo de logs para esta sessão
         try:
@@ -114,37 +151,68 @@ class AutomacaoApp(ctk.CTk):
         except Exception:
             pass
 
-        # 1. Cabeçalho Principal (Ocupa ambas as colunas)
+        # 1. Cabeçalho Principal (Banner no topo)
         self.frame_header = ctk.CTkFrame(self, fg_color="transparent")
-        self.frame_header.grid(row=0, column=0, columnspan=2, padx=30, pady=(25, 10), sticky="ew")
+        self.frame_header.grid(row=0, column=0, columnspan=2, padx=25, pady=(20, 10), sticky="ew")
         
         self.lbl_titulo = ctk.CTkLabel(
-            self.frame_header, text="SYMPLA TICKET BOT", 
-            font=ctk.CTkFont(family="Segoe UI", size=24, weight="bold")
+            self.frame_header, text="⚡ SYMPLA TICKET BOT", 
+            font=ctk.CTkFont(family="Segoe UI", size=22, weight="bold"),
+            text_color="#F8FAFC"
         )
-        self.lbl_titulo.pack(anchor="w")
+        self.lbl_titulo.pack(side="left", anchor="w")
         
+        self.lbl_badge_version = ctk.CTkLabel(
+            self.frame_header, text=" v2.5 PRO ",
+            font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+            fg_color="#312E81", text_color="#818CF8", corner_radius=10
+        )
+        self.lbl_badge_version.pack(side="left", padx=10)
+
         self.lbl_subtitulo = ctk.CTkLabel(
             self.frame_header, text="Gerenciamento automático e emissão em lote de ingressos.", 
-            font=ctk.CTkFont(family="Segoe UI", size=13),
-            text_color="#8A8A8A"
+            font=ctk.CTkFont(family="Segoe UI", size=12),
+            text_color="#64748B"
         )
-        self.lbl_subtitulo.pack(anchor="w", pady=(2, 0))
+        self.lbl_subtitulo.pack(side="right", anchor="e")
 
-        # 2. Painel de Configurações (Esquerda)
-        self.frame_config = ctk.CTkFrame(self)
-        self.frame_config.grid(row=1, column=0, padx=(30, 15), pady=(10, 30), sticky="nsew")
+        # 2. Cartões de Métricas / KPI Dashboard (Linha 1)
+        self.frame_kpi = ctk.CTkFrame(self, fg_color="transparent")
+        self.frame_kpi.grid(row=1, column=0, columnspan=2, padx=25, pady=(0, 15), sticky="ew")
+        for c in range(4):
+            self.frame_kpi.grid_columnconfigure(c, weight=1)
+
+        def criar_kpi_card(parent, col, icon, titulo, cor_valor):
+            card = ctk.CTkFrame(parent, fg_color="#151D2A", border_width=1, border_color="#26334D", corner_radius=10)
+            card.grid(row=0, column=col, padx=(0 if col==0 else 6 if col in (1,2) else 0), sticky="ew")
+            
+            lbl_t = ctk.CTkLabel(card, text=f"{icon}  {titulo}", font=ctk.CTkFont(size=10, weight="bold"), text_color="#64748B")
+            lbl_t.pack(anchor="w", padx=14, pady=(10, 2))
+            
+            lbl_v = ctk.CTkLabel(card, text="0", font=ctk.CTkFont(size=20, weight="bold"), text_color=cor_valor)
+            lbl_v.pack(anchor="w", padx=14, pady=(0, 10))
+            return lbl_v
+
+        self.lbl_kpi_total = criar_kpi_card(self.frame_kpi, 0, "👥", "TOTAL PARTICIPANTES", "#F8FAFC")
+        self.lbl_kpi_emitidos = criar_kpi_card(self.frame_kpi, 1, "✅", "INGRESSOS EMITIDOS", "#34D399")
+        self.lbl_kpi_pendentes = criar_kpi_card(self.frame_kpi, 2, "⏳", "PENDENTES NO CSV", "#FBBF24")
+        self.lbl_kpi_setores = criar_kpi_card(self.frame_kpi, 3, "🏷️", "SETORES DETECTADOS", "#38BDF8")
+
+        # 3. Painel de Configurações (Esquerda - Linha 2)
+        self.frame_config = ctk.CTkFrame(self, fg_color="#151D2A", border_width=1, border_color="#26334D", corner_radius=12)
+        self.frame_config.grid(row=2, column=0, padx=(25, 10), pady=(0, 25), sticky="nsew")
         self.frame_config.grid_columnconfigure(0, weight=1)
 
         self.lbl_config_title = ctk.CTkLabel(
-            self.frame_config, text="Configurações do Evento",
-            font=ctk.CTkFont(family="Segoe UI", size=16, weight="bold")
+            self.frame_config, text="⚙️ Configurações do Evento",
+            font=ctk.CTkFont(family="Segoe UI", size=15, weight="bold"),
+            text_color="#F8FAFC"
         )
         self.lbl_config_title.grid(row=0, column=0, padx=20, pady=(15, 10), sticky="w")
 
         # 1. URL ou ID do Evento
         self.lbl_url = ctk.CTkLabel(self.frame_config, text="URL OU ID DO EVENTO SYMPLA", font=ctk.CTkFont(size=11, weight="bold"), text_color="#A0A0A0")
-        self.lbl_url.grid(row=1, column=0, padx=20, pady=(10, 2), sticky="w")
+        self.lbl_url.grid(row=1, column=0, padx=20, pady=(8, 2), sticky="w")
         
         self.frame_url_field = ctk.CTkFrame(self.frame_config, fg_color="transparent")
         self.frame_url_field.grid(row=2, column=0, padx=20, pady=(0, 10), sticky="ew")
@@ -152,15 +220,16 @@ class AutomacaoApp(ctk.CTk):
 
         self.entry_url = ctk.CTkEntry(
             self.frame_url_field, 
-            height=32,
+            height=34,
             placeholder_text="Digite o ID (ex: 3545453) ou a URL completa"
         )
         self.entry_url.insert(0, DEFAULT_URL)
         self.entry_url.grid(row=0, column=0, sticky="ew", padx=(0, 10))
 
         self.btn_detectar_url = ctk.CTkButton(
-            self.frame_url_field, text="Detectar", width=105, height=32,
+            self.frame_url_field, text="Detectar", width=105, height=34,
             fg_color="#0284C7", hover_color="#0369A1",
+            font=ctk.CTkFont(weight="bold"),
             command=self.iniciar_detecao_sympla
         )
         self.btn_detectar_url.grid(row=0, column=1, sticky="e")
@@ -177,14 +246,15 @@ class AutomacaoApp(ctk.CTk):
         self.combo_perfil = ctk.CTkComboBox(
             self.frame_perfil_field,
             values=perfis_iniciais,
-            height=32
+            height=34
         )
         self.combo_perfil.set(perfis_iniciais[0] if perfis_iniciais else "Perfil_Navegador")
         self.combo_perfil.grid(row=0, column=0, sticky="ew", padx=(0, 10))
 
         self.btn_login_perfil = ctk.CTkButton(
-            self.frame_perfil_field, text="Fazer Login", width=105, height=32,
+            self.frame_perfil_field, text="Fazer Login", width=105, height=34,
             fg_color="#D97706", hover_color="#B45309",
+            font=ctk.CTkFont(weight="bold"),
             command=self.iniciar_login_sympla
         )
         self.btn_login_perfil.grid(row=0, column=1, sticky="e")
@@ -192,14 +262,14 @@ class AutomacaoApp(ctk.CTk):
         # 3. Email Padrão
         self.lbl_email = ctk.CTkLabel(self.frame_config, text="E-MAIL DE REGISTRO DOS INGRESSOS", font=ctk.CTkFont(size=11, weight="bold"), text_color="#A0A0A0")
         self.lbl_email.grid(row=5, column=0, padx=20, pady=(5, 2), sticky="w")
-        self.entry_email = ctk.CTkEntry(self.frame_config, height=32)
+        self.entry_email = ctk.CTkEntry(self.frame_config, height=34)
         self.entry_email.insert(0, DEFAULT_EMAIL)
         self.entry_email.grid(row=6, column=0, padx=20, pady=(0, 10), sticky="ew")
 
         # 4. Quantidade de Ingressos
-        self.lbl_quantidade = ctk.CTkLabel(self.frame_config, text="QUANTIDADE DE INGRESSOS POR PARTICIPANTE", font=ctk.CTkFont(size=11, weight="bold"), text_color="#A0A0A0")
+        self.lbl_quantidade = ctk.CTkLabel(self.frame_config, text="QUANTIDADE PADRÃO DE INGRESSOS", font=ctk.CTkFont(size=11, weight="bold"), text_color="#A0A0A0")
         self.lbl_quantidade.grid(row=7, column=0, padx=20, pady=(5, 2), sticky="w")
-        self.entry_quantidade = ctk.CTkEntry(self.frame_config, height=32)
+        self.entry_quantidade = ctk.CTkEntry(self.frame_config, height=34)
         self.entry_quantidade.insert(0, DEFAULT_QUANTIDADE)
         self.entry_quantidade.grid(row=8, column=0, padx=20, pady=(0, 10), sticky="ew")
 
@@ -211,107 +281,113 @@ class AutomacaoApp(ctk.CTk):
         self.frame_csv_field.grid(row=10, column=0, padx=20, pady=(0, 15), sticky="ew")
         self.frame_csv_field.grid_columnconfigure(0, weight=1)
         
-        # Combobox para listar CSVs da pasta e permitir seleção ou caminho personalizado
         csvs_iniciais = self.listar_csvs_disponiveis()
         self.combo_csv = ctk.CTkComboBox(
             self.frame_csv_field,
             values=csvs_iniciais if csvs_iniciais else ["lista_participantes.csv"],
             command=self.on_csv_combo_select,
-            height=32
+            height=34
         )
         valor_padrao = DEFAULT_CSV if os.path.exists(DEFAULT_CSV) else (os.path.join(DIRETORIO_SCRIPT, csvs_iniciais[0]) if csvs_iniciais else DEFAULT_CSV)
         self.combo_csv.set(valor_padrao)
         self.combo_csv.grid(row=0, column=0, sticky="ew", padx=(0, 10))
         
-        self.btn_csv = ctk.CTkButton(self.frame_csv_field, text="Procurar...", width=105, height=32, command=self.selecionar_csv)
+        self.btn_csv = ctk.CTkButton(self.frame_csv_field, text="Procurar...", width=105, height=34, command=self.selecionar_csv)
         self.btn_csv.grid(row=0, column=1, sticky="e")
 
-        # Atualiza o rótulo com a quantidade exata de arquivos CSV encontrados
         self.atualizar_lista_csv()
 
-        # 3. Painel de Controle e Status (Direita)
-        self.frame_painel = ctk.CTkFrame(self)
-        self.frame_painel.grid(row=1, column=1, padx=(15, 30), pady=(10, 30), sticky="nsew")
+        # 4. Painel de Controle, Terminal e Ações (Direita - Linha 2)
+        self.frame_painel = ctk.CTkFrame(self, fg_color="#151D2A", border_width=1, border_color="#26334D", corner_radius=12)
+        self.frame_painel.grid(row=2, column=1, padx=(10, 25), pady=(0, 25), sticky="nsew")
         self.frame_painel.grid_columnconfigure(0, weight=1)
+        self.frame_painel.grid_rowconfigure(2, weight=1)
 
         self.lbl_painel_title = ctk.CTkLabel(
-            self.frame_painel, text="Painel de Controle",
-            font=ctk.CTkFont(family="Segoe UI", size=16, weight="bold")
+            self.frame_painel, text="🚀 Execução & Logs em Tempo Real",
+            font=ctk.CTkFont(family="Segoe UI", size=15, weight="bold"),
+            text_color="#F8FAFC"
         )
         self.lbl_painel_title.grid(row=0, column=0, padx=20, pady=(15, 10), sticky="w")
 
         # Cartão de Status do Processo
-        self.card_status = ctk.CTkFrame(self.frame_painel, fg_color="#1E1E2F", border_width=1, border_color="#334155")
-        self.card_status.grid(row=1, column=0, padx=20, pady=10, sticky="ew")
+        self.card_status = ctk.CTkFrame(self.frame_painel, fg_color="#0F172A", border_width=1, border_color="#1E293B", corner_radius=10)
+        self.card_status.grid(row=1, column=0, padx=20, pady=(0, 10), sticky="ew")
         self.card_status.grid_columnconfigure(0, weight=1)
 
-        # Badge e Texto de Status Geral
         self.frame_badge_row = ctk.CTkFrame(self.card_status, fg_color="transparent")
-        self.frame_badge_row.grid(row=0, column=0, padx=15, pady=(15, 5), sticky="w")
+        self.frame_badge_row.grid(row=0, column=0, padx=12, pady=(10, 2), sticky="w")
 
         self.badge_status = ctk.CTkLabel(
             self.frame_badge_row, text=" PRONTO ",
             font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
             text_color="#A3A3A3",
-            fg_color="#2E2E2E",
-            corner_radius=12
+            fg_color="#1E293B",
+            corner_radius=10
         )
         self.badge_status.pack(side="left")
 
         self.lbl_status_geral = ctk.CTkLabel(
             self.frame_badge_row, text="Pronto para iniciar",
-            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold")
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            text_color="#F8FAFC"
         )
         self.lbl_status_geral.pack(side="left", padx=10)
 
-        # Progresso Estatístico
         self.lbl_progresso = ctk.CTkLabel(
             self.card_status, text="Nenhum processo ativo", 
-            font=ctk.CTkFont(family="Segoe UI", size=12),
-            text_color="#8A8A8A"
-        )
-        self.lbl_progresso.grid(row=1, column=0, padx=15, pady=(5, 5), sticky="w")
-
-        # Barra de Progresso Customizada
-        self.barra_progresso = ctk.CTkProgressBar(self.card_status, height=8, progress_color="#3D5A80")
-        self.barra_progresso.grid(row=2, column=0, padx=15, pady=(2, 15), sticky="ew")
-        self.barra_progresso.set(0)
-
-        # Status Detalhado (Última ação / Log curto)
-        self.frame_details = ctk.CTkFrame(self.frame_painel, fg_color="transparent")
-        self.frame_details.grid(row=2, column=0, padx=20, pady=(5, 10), sticky="ew")
-        
-        self.lbl_status_detalhes_titulo = ctk.CTkLabel(
-            self.frame_details, text="ÚLTIMA AÇÃO REGISTRADA:", 
-            font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+            font=ctk.CTkFont(family="Segoe UI", size=11),
             text_color="#64748B"
         )
-        self.lbl_status_detalhes_titulo.pack(anchor="w")
-        
-        self.lbl_status_detalhes = ctk.CTkLabel(
-            self.frame_details, text="Aguardando comando...", 
-            font=ctk.CTkFont(family="Segoe UI", size=11, slant="italic"),
-            text_color="#94A3B8"
-        )
-        self.lbl_status_detalhes.pack(anchor="w")
+        self.lbl_progresso.grid(row=1, column=0, padx=12, pady=(2, 4), sticky="w")
 
-        # Botões de Ação
+        self.barra_progresso = ctk.CTkProgressBar(self.card_status, height=8, progress_color="#6366F1")
+        self.barra_progresso.grid(row=2, column=0, padx=12, pady=(2, 10), sticky="ew")
+        self.barra_progresso.set(0)
+
+        # Terminal Log Box estilo VSCode
+        self.frame_terminal_container = ctk.CTkFrame(self.frame_painel, fg_color="transparent")
+        self.frame_terminal_container.grid(row=2, column=0, padx=20, pady=(0, 10), sticky="nsew")
+        self.frame_terminal_container.grid_columnconfigure(0, weight=1)
+        self.frame_terminal_container.grid_rowconfigure(1, weight=1)
+
+        self.lbl_term_title = ctk.CTkLabel(
+            self.frame_terminal_container, text="TERMINAL DE LOGS DO SISTEMA",
+            font=ctk.CTkFont(size=10, weight="bold"),
+            text_color="#64748B"
+        )
+        self.lbl_term_title.grid(row=0, column=0, sticky="w", pady=(0, 4))
+
+        self.txt_terminal = ctk.CTkTextbox(
+            self.frame_terminal_container,
+            fg_color="#090D16", text_color="#38BDF8",
+            font=ctk.CTkFont(family="Consolas", size=11),
+            corner_radius=8, border_width=1, border_color="#1E293B"
+        )
+        self.txt_terminal.grid(row=1, column=0, sticky="nsew")
+        self.txt_terminal.insert("end", "=== CONSOLE DE COMANDOS INICIADO ===\n")
+        self.txt_terminal.configure(state="disabled")
+
+        # Label de detalhes para compatibilidade
+        self.lbl_status_detalhes = ctk.CTkLabel(self, text="")
+
+        # Botões de Ação Principais
         self.frame_actions = ctk.CTkFrame(self.frame_painel, fg_color="transparent")
-        self.frame_actions.grid(row=3, column=0, padx=20, pady=(15, 20), sticky="ew")
+        self.frame_actions.grid(row=3, column=0, padx=20, pady=(0, 15), sticky="ew")
         self.frame_actions.grid_columnconfigure(0, weight=1)
 
         self.btn_rodar = ctk.CTkButton(
-            self.frame_actions, text="INICIAR AUTOMAÇÃO", 
+            self.frame_actions, text="⚡ INICIAR AUTOMAÇÃO DE INGRESSOS", 
             font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
-            height=44, fg_color="#1E3A8A", hover_color="#1D4ED8",
+            height=44, fg_color="#4F46E5", hover_color="#4338CA",
             command=self.iniciar_automacao
         )
-        self.btn_rodar.grid(row=0, column=0, pady=(0, 10), sticky="ew")
+        self.btn_rodar.grid(row=0, column=0, pady=(0, 8), sticky="ew")
 
         self.btn_organizar = ctk.CTkButton(
-            self.frame_actions, text="ORGANIZAR INGRESSOS", 
+            self.frame_actions, text="📁 ORGANIZAR INGRESSOS EM PASTAS", 
             font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
-            height=44, fg_color="#065F46", hover_color="#047857",
+            height=40, fg_color="#059669", hover_color="#047857",
             command=self.iniciar_organizacao
         )
         self.btn_organizar.grid(row=1, column=0, sticky="ew")
@@ -631,21 +707,23 @@ class AutomacaoApp(ctk.CTk):
         qtd = len(csvs)
         
         if qtd == 0:
-            texto_lbl = "ARQUIVO CSV DE PARTICIPANTES (Nenhum CSV na pasta)"
+            texto_lbl = "ARQUIVO CSV DE PARTICIPANTES (Nenhum CSV)"
         elif qtd == 1:
-            texto_lbl = "ARQUIVO CSV DE PARTICIPANTES (1 CSV encontrado)"
+            texto_lbl = "ARQUIVO CSV DE PARTICIPANTES (1 encontrado)"
         else:
-            texto_lbl = f"ARQUIVO CSV DE PARTICIPANTES ({qtd} CSVs encontrados)"
+            texto_lbl = f"ARQUIVO CSV DE PARTICIPANTES ({qtd} encontrados)"
         
         self.lbl_csv.configure(text=texto_lbl)
         if csvs:
             self.combo_csv.configure(values=csvs)
+        self.atualizar_metricas_kpi()
 
     def on_csv_combo_select(self, escolha):
         """Resolve o caminho ao selecionar um CSV no combobox"""
         caminho_completo = os.path.join(DIRETORIO_SCRIPT, escolha)
         if os.path.exists(caminho_completo):
             self.combo_csv.set(caminho_completo)
+        self.atualizar_metricas_kpi()
 
     def selecionar_csv(self):
         """Abre o explorador de arquivos para escolher um CSV"""
@@ -657,20 +735,65 @@ class AutomacaoApp(ctk.CTk):
             self.combo_csv.set(caminho)
             self.atualizar_lista_csv()
 
+    def atualizar_metricas_kpi(self):
+        """Lê os dados do CSV e da pasta de downloads para atualizar os cartões KPI em tempo real"""
+        try:
+            arquivo_csv = self.combo_csv.get().strip() if hasattr(self, "combo_csv") else DEFAULT_CSV
+            if not os.path.isabs(arquivo_csv):
+                arquivo_csv = os.path.join(DIRETORIO_SCRIPT, arquivo_csv)
+
+            pendentes = 0
+            setores = set()
+            if os.path.exists(arquivo_csv):
+                with open(arquivo_csv, 'r', encoding='utf-8-sig') as f:
+                    for linha in f:
+                        linha_limpa = linha.strip()
+                        if not linha_limpa: continue
+                        nome, setor, qtd = extrair_dados_participante(linha_limpa)
+                        if eh_linha_cabecalho(nome, setor, qtd): continue
+                        pendentes += 1
+                        if setor: setores.add(setor.upper())
+
+            pdf_count = 0
+            if os.path.exists(PASTA_DOWNLOADS):
+                for root, dirs, files in os.walk(PASTA_DOWNLOADS):
+                    for file in files:
+                        if file.lower().endswith('.pdf'):
+                            pdf_count += 1
+
+            total = pendentes + pdf_count
+
+            def atualizar():
+                if hasattr(self, "lbl_kpi_total"):
+                    self.lbl_kpi_total.configure(text=str(total))
+                    self.lbl_kpi_emitidos.configure(text=str(pdf_count))
+                    self.lbl_kpi_pendentes.configure(text=str(pendentes))
+                    self.lbl_kpi_setores.configure(text=str(len(setores)))
+            self.after(0, atualizar)
+        except Exception:
+            pass
+
     def log(self, mensagem):
-        """Grava a mensagem no arquivo de logs e exibe a última linha na interface"""
+        """Grava a mensagem no arquivo de logs e exibe no terminal da interface"""
         msg_limpa = mensagem.strip()
         if msg_limpa:
-            # Atualiza o label de status detalhado com a última linha
+            timestamp = time.strftime("%H:%M:%S")
+            linha_log = f"[{timestamp}] {msg_limpa}\n"
+            
             def atualizar():
-                self.lbl_status_detalhes.configure(text=msg_limpa)
+                if hasattr(self, "txt_terminal"):
+                    self.txt_terminal.configure(state="normal")
+                    self.txt_terminal.insert("end", linha_log)
+                    self.txt_terminal.see("end")
+                    self.txt_terminal.configure(state="disabled")
+                if hasattr(self, "lbl_status_detalhes"):
+                    self.lbl_status_detalhes.configure(text=msg_limpa)
             self.after(0, atualizar)
             
-            # Grava no log completo
             try:
                 with open("automacao.log", "a", encoding="utf-8") as f_log:
-                    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-                    f_log.write(f"[{timestamp}] {mensagem}\n")
+                    timestamp_full = time.strftime("%Y-%m-%d %H:%M:%S")
+                    f_log.write(f"[{timestamp_full}] {mensagem}\n")
             except Exception:
                 pass
 
@@ -681,7 +804,7 @@ class AutomacaoApp(ctk.CTk):
                 self.badge_status.configure(
                     text=" PRONTO ",
                     text_color="#A3A3A3",
-                    fg_color="#2E2E2E"
+                    fg_color="#1E293B"
                 )
                 self.lbl_status_geral.configure(text="Pronto para iniciar")
             elif status_type == "automacao":
@@ -712,6 +835,7 @@ class AutomacaoApp(ctk.CTk):
                     fg_color="#7F1D1D"
                 )
                 self.lbl_status_geral.configure(text=texto if texto else "Ocorreu um erro no processo.")
+            self.atualizar_metricas_kpi()
         self.after(0, atualizar)
 
     def atualizar_progresso(self, atual, total, texto_status):
@@ -796,24 +920,27 @@ class AutomacaoApp(ctk.CTk):
                 if not linha_limpa:
                     continue
                 
-                nome = linha_limpa.replace(',', ';').split(';')[0].strip()
+                nome, setor, qtd = extrair_dados_participante(linha_limpa, quantidade_ingressos)
                 
                 # Se for cabeçalho
-                if nome.lower() in ['nome completo', 'nome', 'aluno', 'participante', 'nomes', '']:
+                if eh_linha_cabecalho(nome, setor, qtd):
                     cabecalho = linha
                     continue
                 
-                # Gera o nome seguro do arquivo PDF correspondente
-                nome_arquivo_seguro = "".join([c for c in nome if c.isalpha() or c.isdigit() or c==' ']).rstrip()
+                # Gera os nomes seguros para busca do arquivo PDF
+                nome_seguro = "".join([c for c in nome if c.isalpha() or c.isdigit() or c==' ']).rstrip().lower()
+                nome_com_setor_seguro = "".join([c for c in f"{nome} {setor}" if c.isalpha() or c.isdigit() or c==' ']).rstrip().lower()
                 
                 # Procura pelo arquivo PDF em toda a estrutura da pasta de downloads
                 pdf_ja_existe = False
                 if os.path.exists(PASTA_DOWNLOADS):
                     for root, dirs, files in os.walk(PASTA_DOWNLOADS):
                         for file in files:
-                            if file.lower() == f"{nome_arquivo_seguro.lower()}.pdf":
-                                pdf_ja_existe = True
-                                break
+                            if file.lower().endswith('.pdf'):
+                                arq_sem_ext = file.lower()[:-4].strip()
+                                if arq_sem_ext == nome_seguro or arq_sem_ext == nome_com_setor_seguro or arq_sem_ext.startswith(nome_seguro):
+                                    pdf_ja_existe = True
+                                    break
                         if pdf_ja_existe:
                             break
                 
@@ -842,24 +969,24 @@ class AutomacaoApp(ctk.CTk):
         except Exception as e_csv:
             self.log(f"Aviso ao filtrar CSV: {e_csv}")
 
-        # 2. Carrega a lista final de nomes do CSV atualizado
-        lista_nomes = []
+        # 2. Carrega a lista final de participantes (nome, setor, quantidade) do CSV atualizado
+        lista_participantes = []
         try:
             with open(arquivo_csv, 'r', encoding='utf-8-sig') as f:
                 for linha in f:
                     linha_limpa = linha.strip()
                     if not linha_limpa: continue
-                    nome = linha_limpa.replace(',', ';').split(';')[0].strip()
-                    if nome.lower() in ['nome completo', 'nome', 'aluno', 'participante', 'nomes', '']: continue
-                    lista_nomes.append(nome)
-            self.log(f"Total de nomes a emitir: {len(lista_nomes)}")
+                    nome, setor, qtd = extrair_dados_participante(linha_limpa, quantidade_ingressos)
+                    if eh_linha_cabecalho(nome, setor, qtd): continue
+                    lista_participantes.append({"nome": nome, "setor": setor, "quantidade": qtd})
+            self.log(f"Total de participantes a emitir: {len(lista_participantes)}")
         except FileNotFoundError:
             self.log(f"❌ Erro: O arquivo '{arquivo_csv}' não foi encontrado.")
             self.definir_status("erro", "Arquivo CSV não encontrado.")
             self.alterar_estado_botoes("normal")
             return
 
-        total = len(lista_nomes)
+        total = len(lista_participantes)
         
         # Se não restar nenhum participante, finaliza imediatamente de forma amigável
         if total == 0:
@@ -900,13 +1027,18 @@ class AutomacaoApp(ctk.CTk):
                         navegar_seguro(page, url_evento)
                         time.sleep(1.5)
 
-                for count, nome_completo in enumerate(lista_nomes, start=1):
-                    self.definir_status("automacao", f"Emitindo ingressos de {nome_completo}")
+                for count, p_info in enumerate(lista_participantes, start=1):
+                    nome_completo = p_info["nome"]
+                    setor = p_info["setor"]
+                    qtd_participante = p_info.get("quantidade", quantidade_ingressos)
+                    
+                    self.definir_status("automacao", f"Emitindo {qtd_participante} ingresso(s) de {nome_completo}")
                     self.atualizar_progresso(count, total, f"Processando: {count} de {total}")
-                    self.log(f"[{count}/{total}] Iniciando formulário de: {nome_completo}")
+                    self.log(f"[{count}/{total}] Formulário de: {nome_completo} ({setor}) - Qtd: {qtd_participante}")
                     
                     try:
-                        nome_arquivo_seguro = "".join([c for c in nome_completo if c.isalpha() or c.isdigit() or c==' ']).rstrip()
+                        nome_salvar = f"{nome_completo} {setor}" if setor and setor.upper() != "GERAL" else nome_completo
+                        nome_arquivo_seguro = "".join([c for c in nome_salvar if c.isalpha() or c.isdigit() or c==' ']).rstrip()
                         
                         # Clique em Adicionar Pedido
                         page.click("a.btn-primary:has-text('Adicionar Pedido')")
@@ -921,7 +1053,7 @@ class AutomacaoApp(ctk.CTk):
                         select_elemento = page.locator("select.quant-add-order").first
                         
                         try:
-                            page.wait_for_selector(f"select.quant-add-order option[value='{quantidade_ingressos}']", state="attached", timeout=3000)
+                            page.wait_for_selector(f"select.quant-add-order option[value='{qtd_participante}']", state="attached", timeout=3000)
                         except:
                             pass
                         
@@ -938,7 +1070,7 @@ class AutomacaoApp(ctk.CTk):
                             
                             page.wait_for_selector("li.select2-results__option", state="visible", timeout=3000)
                             
-                            opcao = page.locator(f"li.select2-results__option:has-text('{quantidade_ingressos}')").first
+                            opcao = page.locator(f"li.select2-results__option:has-text('{qtd_participante}')").first
                             opcao.click()
                             select2_selecionado = True
                         except Exception:
@@ -952,20 +1084,20 @@ class AutomacaoApp(ctk.CTk):
                                 time.sleep(0.3)
                                 
                                 opcoes = [opt.get_attribute("value") for opt in select_elemento.locator("option").all()]
-                                if quantidade_ingressos in opcoes:
-                                    target_index = opcoes.index(quantidade_ingressos)
+                                if qtd_participante in opcoes:
+                                    target_index = opcoes.index(qtd_participante)
                                     for _ in range(target_index):
                                         page.keyboard.press("ArrowDown")
                                         time.sleep(0.2)
                                     page.keyboard.press("Enter")
                                     page.keyboard.press("Tab")
                                 else:
-                                    select_elemento.evaluate(f"el => {{ el.value = '{quantidade_ingressos}'; el.dispatchEvent(new Event('change', {{ bubbles: true }})); el.dispatchEvent(new Event('input', {{ bubbles: true }})); }}")
+                                    select_elemento.evaluate(f"el => {{ el.value = '{qtd_participante}'; el.dispatchEvent(new Event('change', {{ bubbles: true }})); el.dispatchEvent(new Event('input', {{ bubbles: true }})); }}")
                             except Exception:
                                 try:
-                                    select_elemento.evaluate(f"el => {{ el.value = '{quantidade_ingressos}'; el.dispatchEvent(new Event('change', {{ bubbles: true }})); el.dispatchEvent(new Event('input', {{ bubbles: true }})); }}")
+                                    select_elemento.evaluate(f"el => {{ el.value = '{qtd_participante}'; el.dispatchEvent(new Event('change', {{ bubbles: true }})); el.dispatchEvent(new Event('input', {{ bubbles: true }})); }}")
                                 except:
-                                    select_elemento.select_option(quantidade_ingressos, force=True)
+                                    select_elemento.select_option(qtd_participante, force=True)
                         
                         time.sleep(2.5)
                         
@@ -974,7 +1106,7 @@ class AutomacaoApp(ctk.CTk):
                         page.wait_for_selector('input[name="first-name"]', timeout=15000)
                         
                         # Preenche os N ingressos sequenciais
-                        for i in range(1, int(quantidade_ingressos) + 1):
+                        for i in range(1, int(qtd_participante) + 1):
                             idx = i - 1
                             input_nome = page.locator('input[name="first-name"]').nth(idx)
                             
@@ -1059,6 +1191,28 @@ class AutomacaoApp(ctk.CTk):
             self.alterar_estado_botoes("normal")
             return
 
+        # Carrega o mapa de participante -> setor a partir do CSV selecionado (se disponível)
+        mapa_participantes_setor = {}
+        arquivo_csv = self.combo_csv.get().strip() if hasattr(self, "combo_csv") else DEFAULT_CSV
+        if not os.path.isabs(arquivo_csv):
+            arquivo_csv = os.path.join(DIRETORIO_SCRIPT, arquivo_csv)
+
+        if os.path.exists(arquivo_csv):
+            try:
+                with open(arquivo_csv, 'r', encoding='utf-8-sig') as f:
+                    for linha in f:
+                        linha_limpa = linha.strip()
+                        if not linha_limpa:
+                            continue
+                        nome, setor, qtd = extrair_dados_participante(linha_limpa)
+                        if eh_linha_cabecalho(nome, setor, qtd):
+                            continue
+                        nome_limpo = "".join([c for c in nome.lower() if c.isalnum() or c == ' ']).strip()
+                        if nome_limpo:
+                            mapa_participantes_setor[nome_limpo] = setor.strip() if setor else "GERAL"
+            except Exception as e_map:
+                self.log(f"Aviso ao ler CSV para organização: {e_map}")
+
         try:
             for count, arquivo in enumerate(arquivos, start=1):
                 if not arquivo.lower().endswith('.pdf'):
@@ -1091,13 +1245,27 @@ class AutomacaoApp(ctk.CTk):
                             self.log(f"❌ Falha irreparável em '{arquivo}': {e_fix}")
                             continue
 
-                    # 2. Divisão por Categoria (Ex: VIP, Pista, Setor A) baseada na última palavra do nome
+                    # 2. Divisão por Categoria / Setor (Ex: VIP, Pista, Setor A)
                     nome_sem_extensao = arquivo[:-4].strip()
-                    partes_nome = nome_sem_extensao.split()
+                    nome_arq_limpo = "".join([c for c in nome_sem_extensao.lower() if c.isalnum() or c == ' ']).strip()
                     
-                    if len(partes_nome) > 1:
-                        categoria = partes_nome[-1].upper()
-                    else:
+                    categoria = None
+                    # Tenta correspondência pelo mapa do CSV
+                    for p_nome, p_setor in mapa_participantes_setor.items():
+                        if p_nome and (p_nome in nome_arq_limpo or nome_arq_limpo.startswith(p_nome)):
+                            categoria = p_setor
+                            break
+                    
+                    # Se não encontrou no CSV, extrai da palavra final do nome do arquivo
+                    if not categoria:
+                        partes_nome = nome_sem_extensao.split()
+                        if len(partes_nome) > 1:
+                            categoria = partes_nome[-1]
+                        else:
+                            categoria = "GERAL"
+                    
+                    categoria = categoria.strip()
+                    if not categoria:
                         categoria = "GERAL"
                         
                     pasta_categoria = os.path.join(PASTA_DOWNLOADS, categoria)

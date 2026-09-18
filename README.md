@@ -44,16 +44,18 @@ Sistema automatizado desenvolvido em Python com interface gráfica (CustomTkinte
 
 ## Formato do Arquivo CSV
 
-O arquivo CSV deve utilizar a coluna `Nome Completo` (ou `Nome` / `Participante`). A categoria para organização deve ser inserida como a última palavra do nome do participante:
+O arquivo CSV suporta até 3 colunas separadas por vírgula (ou ponto e vírgula): `Nome Completo`, `Setor` (ou Categoria) e `Quantidade` (opcional - quantidade de ingressos individual por participante):
 
 ```csv
-Nome Completo
-João Silva VIP
-Maria Santos Pista
-Carlos Oliveira Setor A
-Ana Souza Geral
-Pedro Henrique VIP
+Nome Completo, Setor, Quantidade
+João Silva, VIP, 2
+Maria Santos, Pista, 1
+Carlos Oliveira, Setor A, 3
+Ana Souza, Geral, 1
+Pedro Henrique, VIP, 4
 ```
+
+*Nota: Se a 3ª coluna (`Quantidade`) for omitida para algum participante, a quantidade padrão configurada na tela da aplicação será utilizada.*
 
 ## Instruções de Uso
 
